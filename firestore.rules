@@ -1,0 +1,186 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'chips', 'gamesPlayed', 'wins', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'chips', 'gamesPlayed', 'wins', 'createdAt', 'updatedAt'])
+        && data.uid is string
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.displayName is string
+        && data.displayName.size() >= 1
+        && data.displayName.size() <= 40
+        && data.chips is number
+        && data.chips >= 0
+        && data.chips <= 10000000
+        && data.gamesPlayed is number
+        && data.gamesPlayed >= 0
+        && data.wins is number
+        && data.wins >= 0
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidUserPrivate(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'updatedAt'])
+        && data.uid is string
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.email is string
+        && data.email.size() >= 3
+        && data.email.size() <= 120
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidLobby(data, lobbyId) {
+      return data.keys().hasAll(['id', 'hostId', 'gameType', 'deckCount', 'botCount', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['id', 'hostId', 'gameType', 'deckCount', 'botCount', 'status', 'createdAt', 'updatedAt'])
+        && data.id is string
+        && isValidId(data.id)
+        && data.id == lobbyId
+        && data.hostId is string
+        && isValidId(data.hostId)
+        && data.gameType in ['poker', 'rummy']
+        && data.deckCount is number
+        && data.deckCount >= 1
+        && data.deckCount <= 4
+        && data.botCount is number
+        && data.botCount >= 0
+        && data.botCount <= 5
+        && data.status in ['waiting', 'playing', 'finished']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidChatMessage(data, lobbyId, messageId) {
+      return data.keys().hasAll(['id', 'lobbyId', 'senderId', 'senderName', 'text', 'createdAt'])
+        && data.keys().hasOnly(['id', 'lobbyId', 'senderId', 'senderName', 'text', 'createdAt'])
+        && data.id is string
+        && isValidId(data.id)
+        && data.id == messageId
+        && data.lobbyId is string
+        && isValidId(data.lobbyId)
+        && data.lobbyId == lobbyId
+        && data.senderId is string
+        && isValidId(data.senderId)
+        && data.senderId == request.auth.uid
+        && data.senderName is string
+        && data.senderName.size() >= 1
+        && data.senderName.size() <= 40
+        && data.text is string
+        && data.text.size() >= 1
+        && data.text.size() <= 300
+        && data.createdAt is timestamp;
+    }
+
+    match /users/{userId} {
+      allow get: if isValidId(userId) && isOwner(userId);
+      allow list: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isValidId(userId)
+        && isVerifiedUser()
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isVerifiedUser()
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'chips', 'gamesPlayed', 'wins', 'updatedAt']);
+      allow delete: if false;
+
+      match /private/{docId} {
+        allow get: if isValidId(userId) && isValidId(docId) && isOwner(userId);
+        allow list: if isOwner(userId);
+        allow create: if isValidId(userId)
+          && docId == 'account'
+          && isVerifiedUser()
+          && isOwner(userId)
+          && isValidUserPrivate(incoming(), userId)
+          && incoming().updatedAt == request.time;
+        allow update: if isValidId(userId)
+          && docId == 'account'
+          && isVerifiedUser()
+          && isOwner(userId)
+          && isValidUserPrivate(incoming(), userId)
+          && incoming().uid == existing().uid
+          && incoming().updatedAt == request.time
+          && incoming().diff(existing()).affectedKeys().hasOnly(['email', 'updatedAt']);
+        allow delete: if false;
+      }
+    }
+
+    match /lobbies/{lobbyId} {
+      allow get: if isValidId(lobbyId) && isVerifiedUser();
+      allow list: if isVerifiedUser() && resource.data.hostId == request.auth.uid;
+      allow create: if isValidId(lobbyId)
+        && isVerifiedUser()
+        && isValidLobby(incoming(), lobbyId)
+        && incoming().hostId == request.auth.uid
+        && incoming().status == 'waiting'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(lobbyId)
+        && isVerifiedUser()
+        && existing().status != 'finished'
+        && existing().hostId == request.auth.uid
+        && isValidLobby(incoming(), lobbyId)
+        && incoming().id == existing().id
+        && incoming().hostId == existing().hostId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['gameType', 'deckCount', 'botCount', 'updatedAt']) ||
+          incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+        );
+      allow delete: if isValidId(lobbyId) && isVerifiedUser() && existing().hostId == request.auth.uid;
+
+      match /messages/{messageId} {
+        allow get: if isValidId(lobbyId) && isValidId(messageId) && isVerifiedUser()
+          && exists(/databases/$(database)/documents/lobbies/$(lobbyId));
+        allow list: if isVerifiedUser()
+          && resource.data.lobbyId == lobbyId
+          && resource.data.senderId == request.auth.uid;
+        allow create: if isValidId(lobbyId)
+          && isValidId(messageId)
+          && isVerifiedUser()
+          && exists(/databases/$(database)/documents/lobbies/$(lobbyId))
+          && isValidChatMessage(incoming(), lobbyId, messageId)
+          && incoming().createdAt == request.time;
+        allow update, delete: if false;
+      }
+    }
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "TABLESTAKES",
+  "description": "Private card rooms for you and your friends. Poker, Rummy, Sevens (Badam Satti), Bluff Master & UNO — live in the browser with custom lobby links, bots, multi-deck support, and real-time chat.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
